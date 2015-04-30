@@ -113,9 +113,13 @@ class RECTS(object):
 
     BattleTopRightCorner = (1346, 0, 170, 175)
 
-class OpenCVImageMacher(object):
-    def __init__(self, imgfile):
-        self.img = cv2.imread(imgfile)
+class OpenCVImageMatcher(object):
+    def __init__(self, img):
+        if isinstance(img, Image.Image):
+            cv_img = np.array(img)
+            self.img = cv2.cvtColor(cv_img, cv2.cv.CV_BGR2RGB)
+        else:
+            self.img = cv2.imread(imgfile)
         self.img_gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
 
     def match_sub_image(self, imgfile, threshold = 0.8):
@@ -158,6 +162,25 @@ class OpenCVImageMacher(object):
         loc = np.where( res >= threshold)
 
         return [(x,y) for x, y in zip(*loc[::-1])]
+
+
+    def is_non_special(self):
+        # right corner,
+        return self.img[2024, 1530, 0] > 200 and self.img[2024, 1530, 1] > 200 and self.img[2024, 1530, 2] > 200
+
+    def is_battle(self):
+        return self.is_non_special() and \
+            (not self.match_sub_image_in_rect("./yabiao_remain_time_label.png", RECTS.YaBiaoRemainTime)) and \
+            (self.match_sub_image_in_rect("./in_battle_dropdown_button.png", RECTS.BattleTopRightCorner) or \
+             self.match_sub_image_in_rect("./battle_cancel_icon.png", RECTS.BottomIcons) or \
+             self.match_sub_image_in_rect("./tactical_formation_icon.png", RECTS.BattleHeading) or \
+             self.match_sub_image_in_rect("./auto_icon.png", RECTS.BottomIcons))
+
+    def is_normal(self):
+        return self.is_non_special() and (
+            self.match_sub_image_in_rect("./guide_icon.png", RECTS.TopIcons) or \
+            self.match_sub_image_in_rect("./mall_icon.png", RECTS.LeftIcons) or \
+            self.match_sub_image_in_rect("./plus_icon.png", RECTS.BottomIcons))
 
 
 def match_sub_image_in_main_image(sub, main):
@@ -217,9 +240,10 @@ def loop_ZhuaGui(game):
     #and not \
     #   match_sub_image_in_main_image("./guide_icon.png"):
     # 战斗取消图标。阵法图标
-    matcher = OpenCVImageMacher("./2.png")
+    matcher = OpenCVImageMatcher("./2.png")
 
     STOP_AFTER = 0.1
+
     if matcher.match_sub_image("./chat_input.png"):
         print u"检测到聊天窗口开启 -- 停止挂机"
         reactor.callLater(0.1, reactor.stop)
@@ -333,48 +357,49 @@ def loop_ZhuaGui(game):
     reactor.callLater(STOP_AFTER, reactor.stop)
 
 
-
+# game is the Game Client
 def loop(game):
     width, height = game.width, game.height
     # print '#', time.ctime()
 
-    start_time = time.time()
-    matcher = OpenCVImageMacher("./2.png")
+    #matcher = OpenCVImageMacher("./2.png")
+    matcher = OpenCVImageMatcher(game.screen)
 
-    STOP_AFTER = 0.1
+    STOP_AFTER = 0.5
 
     ######################################## 过渡
     # 最左边经验条，为橘红色时，场景过渡进度条
-    r, g, b = game.screen.getpixel((3,40))
-    if r > 150:
-        print u"场景过渡： skip"
-        reactor.callLater(STOP_AFTER, reactor.stop)
-        return
+    if not matcher.match_sub_image("./login_game_button.png"):
+        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034][::-1]:
+            r, g, b = game.screen.getpixel((3,y))
+            # FIXME
+            if r > 150:
+                print u"场景过渡： skip"
+                #reactor.callLater(STOP_AFTER, reactor.stop)
+                return 0
 
     # elif matcher.match_sub_image_in_rect("./kicked_out_label.png", RECTS.AnyPopUp):
     #     print u"警告：帐号被踢出"
     #     return
     ######################################## 战斗
     # 判定自动、取消按钮，阵法图标
-    elif matcher.match_sub_image_in_rect("./in_battle_dropdown_button.png", RECTS.BattleTopRightCorner) or \
-         matcher.match_sub_image_in_rect("./battle_cancel_icon.png", RECTS.BottomIcons) or \
-         matcher.match_sub_image_in_rect("./tactical_formation_icon.png", RECTS.BattleHeading) or \
-         matcher.match_sub_image_in_rect("./auto_icon.png", RECTS.BottomIcons):
-        print u"判定：战斗/押镖中"
+    if matcher.is_battle():
+        print u"判定：战斗中"
         if matcher.match_sub_image_in_rect("./fashu_icon.png", RECTS.RightIcons):
             print u"已设置自动战斗！"
             game.touchAt(122, 1968)
-            game.pause(0.5)
+        pos = matcher.match_sub_image("./close_icon.png")
+        if pos:
+            print u"检测到有窗口遮挡"
+            game.touchAt(pos[0] + 20, pos[1] + 20)
+
         else:
             # 尝试点一下边界，清理未关闭对话框
             game.touchAt(1483, 601)
 
     ######################################## 一般场景
     # 判定 “指引”， 加号，商城
-    elif matcher.match_sub_image_in_rect("./guide_icon.png", RECTS.TopIcons) or \
-         matcher.match_sub_image_in_rect("./mall_icon.png", RECTS.LeftIcons) or \
-         matcher.match_sub_image_in_rect("./plus_icon.png", RECTS.BottomIcons):
-
+    elif matcher.is_normal():
         # 用 while 循环的 break 快速退出判断
         while True:
             print u"判定：一般场景"
@@ -409,12 +434,20 @@ def loop(game):
                 game.touchAt(*pos)
                 break
 
+            # 只有一个NPC上有多个任务时候才会出现
+            pos = matcher.match_sub_image_in_rect("./shimenrenwu_button.png", RECTS.Actions)
+            if pos:
+                print u"师门任务任务按钮"
+                game.touchAt(*pos)
+                break
+
             pos = matcher.match_sub_image_in_rect("./use_icon.png", RECTS.ItemUse)
             if pos:
                 print u"处理任务道具使用", pos
                 game.touchAt(*pos)
-                game.pause(2)
+                STOP_AFTER = 3.0
                 break
+
 
             # $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
             pt = None
@@ -453,12 +486,18 @@ def loop(game):
                 game.touchAt(1290, 1732)
 
             else:
-                print u"警告！！！！未发现可用任务"
-                print u"尝试打开活动窗口领任务！"
-                game.touchAt(1454, 700)
+                if game.nothing_to_do_counter >= 4:
+                    print u"尝试打开活动窗口领任务！"
+                    game.screen.save("./2.png")
+                    game.touchAt(1454, 700)
+                else:
+                    game.nothing_to_do_counter += 1
+                    print u"警告！未发现可用任务，重试！"
+                    return 1.0
 
             # while
             break
+        game.nothing_to_do_counter = 0
     else:
         print u"判定：特殊场景"
 
@@ -538,7 +577,9 @@ def loop(game):
                         STOP_AFTER = 5.0
                         break
                     else:
-                        print u"活跃度不足，忽略运镖任务"
+
+                        print u"忽略运镖任务"
+                        pass
                 pos = matcher.match_sub_image_in_rect("./activity_baotu_label.png", RECTS.ActivityPanelHeader)
                 if pos and not matcher.match_sub_image_in_rect("./activity_finished_button.png",
                                                                (pos[0] - 486, pos[1] - 130, 597, 450)):
@@ -552,10 +593,14 @@ def loop(game):
                     print u"翻页已达最后，无可用任务，请手动处理！！"
                 else:
                     print u"未找到可用任务，尝试滑动下一页..."
+                    game.touchAt(1192, 361) # 点击日常活动按钮
+                    time.sleep(2.0)
+                    # 开始滑动
                     game.mouseMove(810, 1685)
                     game.mouseDown(1)
-                    game.mouseDrag(810, 900, step = 40)
+                    game.mouseDrag(810, 1200, step = 40)
                     game.mouseUp(1)
+                    STOP_AFTER = 5.0
 
                 # pos = matcher.match_sub_image_in_rect("./activity_baotu_label.png",
                 #                                       RECTS.ActivityPanelHeader)
@@ -574,7 +619,7 @@ def loop(game):
 
         elif matcher.match_sub_image_in_rect("./yabiao_remain_time_label.png", RECTS.YaBiaoRemainTime):
             print u"押镖中，等待完成..."
-            STOP_AFTER = 5.0
+            STOP_AFTER = 10.0
         elif matcher.match_sub_image_in_rect("./shimen_finished_label.png", RECTS.CenterPopUp):
             print u"弹窗：师门结束提示"
             game.touchAt(640, 800)
@@ -587,9 +632,9 @@ def loop(game):
         elif matcher.match_sub_image_in_rect("./continue_icon.png", RECTS.RightCorner):
             print u"剧情：检测到继续按钮"
             game.touchAt(1427, 1983)
-            game.pause(1.0)
+            time.sleep(0.1)
             game.touchAt(1427, 1983)
-            game.pause(1.0)
+            time.sleep(0.1)
         else:
             pos = matcher.match_sub_image("./close_icon.png")
             if pos:
@@ -598,50 +643,34 @@ def loop(game):
             else:
                 print u"尝试等待"
 
-    if False:
-        # 检查指引图标
-        if matcher.match_sub_image("./mall_icon.png"):
-            print u"判定：场景地图"
-            if matcher.match_sub_image("./guaji_icon.png") and False:
-                print u"判定：挂机状态处理"
-                # 挂机按钮
-                game.touchAt(1440, 860)
-                game.pause(0.5)
-                # 平定安邦
-                # print u"尝试领取平定安邦"
-                # game.touchAt(280, 270)
-                # game.pause(0.5)
-                # # 关闭
-                # game.touchAt(1317, 12)
-
-
 
         #break
-    print '#', time.ctime(), "tt=%.3fs" % (time.time() - start_time)
-    reactor.callLater(STOP_AFTER, reactor.stop)
+    #reactor.callLater(STOP_AFTER, reactor.stop)
+
+    return STOP_AFTER
 
 
 
 
 def loop_JuQing(game):
-    print "#", time.ctime()
 
     width, height = game.width, game.height
+    STOP_AFTER = 0.1
 
-    r, g, b = game.screen.getpixel((3,40))
-    if r > 150:
-        print u"判定：场景过渡"
-        reactor.callLater(0.1, reactor.stop)
-        return
+    for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034][::-1]:
+        r, g, b = game.screen.getpixel((3,y))
+        # FIXME
+        if r > 150:
+            print u"场景过渡： skip"
+            #reactor.callLater(STOP_AFTER, reactor.stop)
+            return 0
 
-    matcher = OpenCVImageMacher("./2.png")
+    matcher = OpenCVImageMatcher(game.screen)
     # matcher.match_sub_image("./dropdown_button.png")
     #and not \
     #   matcher.match_sub_image("./guide_icon.png"):
     # 战斗取消图标。阵法图标
-    if matcher.match_sub_image("./tactical_formation_icon.png") or \
-       matcher.match_sub_image("./battle_cancel_icon.png") or \
-       matcher.match_sub_image("./auto_icon.png"):
+    if matcher.is_battle():
         print u"判定：战斗中"
         if matcher.match_sub_image("./fashu_icon.png"):
             print u"已设置自动战斗！"
@@ -649,8 +678,7 @@ def loop_JuQing(game):
             game.pause(0.5)
 
     # 判定 “指引”， 加号
-    elif matcher.match_sub_image("./mall_icon.png") or \
-         matcher.match_sub_image("./plus_icon.png"):
+    elif matcher.is_normal():
         print u"判定：场景模式"
 
         pos = matcher.match_sub_image("./guide_left_top_border.png")
@@ -717,11 +745,12 @@ def loop_JuQing(game):
                 game.touchAt(926, 795)
 
 
-    reactor.callLater(0.1, reactor.stop)
+    return STOP_AFTER
 
 
 
 class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
+
     def timeoutConnection(self):
         print "!!!!! 超时！"
         reactor.callLater(0.1, reactor.stop)
@@ -733,6 +762,10 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
         VNCDoToolClient.vncConnectionMade(self)
 
         self.setTimeout(20)
+
+        self.counter = 0
+        self.nothing_to_do_counter = 0
+
         # self.setPixelFormat(bpp=8, depth=8, bigendian=0, truecolor=1,
         #     redmax=7,   greenmax=7,   bluemax=3,
         #     redshift=5, greenshift=2, blueshift=0
@@ -759,10 +792,20 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
     def commitUpdate(self, rectangles):
         VNCDoToolClient.commitUpdate(self, rectangles)
 
-        print '~ update ~', rectangles
-        print self.screen
-        self.framebufferUpdateRequest(incremental=1)
+        self.counter += 1
+        start_time = time.time()
 
+        sleep_after = loop(self)
+        #sleep_after = loop_JuQing(self)
+
+        print '#', time.ctime(), "tt=%.3fs" % (time.time() - start_time), \
+            "wait=%.1fs" % sleep_after, "cnt=%d" % self.counter
+        #time.sleep(sleep_after)
+
+        reactor.callLater(sleep_after,
+                          self.framebufferUpdateRequest,
+                          incremental=1)
+        self.resetTimeout()
 
 
     def bad_updateRectangle(self, x, y, width, height, data):
@@ -797,29 +840,6 @@ class ExitingProcess(protocol.ProcessProtocol):
 
     def errReceived(self, data):
         print data
-
-
-class VNCDoToolOptionParser(optparse.OptionParser):
-    def format_help(self, **kwargs):
-        result = optparse.OptionParser.format_help(self, **kwargs)
-        result += '\n'.join(
-           ['',
-            'Commands (CMD):',
-            '  key KEY:\tsend KEY to server',
-            '\t\tKEY is alphanumeric or a keysym, e.g. ctrl-c, del',
-            '  type TEXT:\tsend alphanumeric string of TEXT',
-            '  move|mousemove X Y:\tmove the mouse cursor to position X,Y',
-            '  click BUTTON:\tsend a mouse BUTTON click',
-            '  capture FILE:\tsave current screen as FILE',
-            '  expect FILE FUZZ:  Wait until the screen matches FILE',
-            '\t\tFUZZ amount of error tolerance (RMSE) in match',
-            '  mousedown BUTTON:\tsend BUTTON down',
-            '  mouseup BUTTON:\tsend BUTTON up',
-            '  pause DURATION:\twait DURATION seconds before sending next',
-            '  drag X Y:\tmove the mouse to X,Y in small steps',
-            '',
-           ])
-        return result
 
 
 def build_command_list(factory, args=False, delay=None, warp=1.0):
@@ -903,22 +923,17 @@ def build_command_list(factory, args=False, delay=None, warp=1.0):
             factory.deferred.addCallback(client.pause, delay)
 
 
-def build_tool(options, args):
+def build_tool():
     factory = VNCDoToolFactory()
     factory.protocol = VNCXyqClient
 
-    if options.verbose:
-        factory.deferred.addCallbacks(log_connected)
+    factory.deferred.addCallbacks(log_connected)
 
-    if args == ['-']:
-        lex = shlex.shlex(posix=True)
-        lex.whitespace_split = True
-        args = list(lex)
-
-    build_command_list(factory, args, options.delay, options.warp)
+    args = ["capture", "2.png"]
+    build_command_list(factory, args, False, False)
 
     # 任务
-    factory.deferred.addCallback(loop)
+    #factory.deferred.addCallback(loop)
     #factory.deferred.addCallback(loop_ZhuaGui)
     #factory.deferred.addCallback(loop_JuQing)
     factory.deferred.addErrback(error)
@@ -929,44 +944,16 @@ def build_tool(options, args):
     return factory
 
 
-def build_proxy(options):
-    factory = VNCLoggingServerFactory(options.host, int(options.port))
-    port = reactor.listenTCP(options.listen, factory)
-    reactor.exit_status = 0
-    factory.listen_port = port.getHost().port
-
-    return factory
-
-
-def add_standard_options(parser):
-    parser.disable_interspersed_args()
-
-    parser.add_option('-p', '--password', action='store', metavar='PASSWORD',
-        help='use password to access server')
-
-    parser.add_option('-s', '--server', action='store', metavar='SERVER',
-        default='127.0.0.1',
-        help='connect to VNC server at ADDRESS[:DISPLAY|::PORT] [%default]')
-
-    parser.add_option('--logfile', action='store', metavar='FILE',
-        help='output logging information to FILE')
-
-    parser.add_option('-v', '--verbose', action='count',
-        help='increase verbosity, use multple times')
-
-    return parser
-
-
-def setup_logging(options):
+def setup_logging(logfile=None, verbose=False):
     # route Twisted log messages via stdlib logging
-    if options.logfile:
-        handler = logging.handlers.RotatingFileHandler(options.logfile,
-                                      maxBytes=5*1024*1024, backupCount=5)
+    if logfile:
+        handler = logging.handlers.RotatingFileHandler(logfile,
+                                                       maxBytes=5*1024*1024, backupCount=5)
         logging.getLogger().addHandler(handler)
         sys.excepthook = log_exceptions
 
     logging.basicConfig()
-    if options.verbose > 1:
+    if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     elif options.verbose:
         logging.getLogger().setLevel(logging.INFO)
@@ -992,113 +979,12 @@ def parse_host(server):
     return host, port
 
 
-def vnclog():
-    usage = '%prog [options] OUTPUT'
-    description = 'Capture user interactions with a VNC Server'
-
-    op = optparse.OptionParser(usage=usage, description=description)
-    add_standard_options(op)
-
-    op.add_option('--listen', metavar='PORT', type='int',
-        help='listen for client connections on PORT [%default]')
-    op.set_defaults(listen=5902)
-
-    op.add_option('--forever', action='store_true',
-        help='continually accept new connections')
-
-    op.add_option('--viewer', action='store', metavar='CMD',
-        help='launch an interactive client using CMD [%default]')
-
-    options, args = op.parse_args()
-
-    setup_logging(options)
-
-    options.host, options.port = parse_host(options.server)
-
-    if len(args) != 1:
-        op.error('incorrect number of arguments')
-    output = args[0]
-
-    factory = build_proxy(options)
-
-    if options.forever and os.path.isdir(output):
-        factory.output = output
-    elif options.forever:
-        op.error('--forever requires OUTPUT to be a directory')
-    elif output == '-':
-        factory.output = sys.stdout
-    else:
-        factory.output = open(output, 'w')
-
-    if options.listen == 0:
-        log.info('accepting connections on ::%d', factory.listen_port)
-
-    factory.password = options.password
-
-    if options.viewer:
-        cmdline = '%s localhost::%s' % (options.viewer, factory.listen_port)
-        proc = reactor.spawnProcess(ExitingProcess(),
-                                    options.viewer, cmdline.split(),
-                                    env=os.environ)
-
-    reactor.run()
-
-    sys.exit(reactor.exit_status)
-
-
 def vncdo():
-    usage = '%prog [options] (CMD CMDARGS|-|filename)'
-    description = 'Command line control of a VNC server'
+    setup_logging("./my.log", verbose=True)
 
-    op = VNCDoToolOptionParser(usage=usage, description=description)
-    add_standard_options(op)
 
-    op.add_option('--delay', action='store', metavar='MILLISECONDS',
-        default=os.environ.get('VNCDOTOOL_DELAY', 10), type='int',
-        help='delay MILLISECONDS between actions [%defaultms]')
-
-    op.add_option('--force-caps', action='store_true',
-        help='for non-compliant servers, send shift-LETTER, ensures capitalization works')
-
-    op.add_option('--localcursor', action='store_true',
-        help='mouse pointer drawn client-side, useful when server does not include cursor')
-
-    op.add_option('--nocursor', action='store_true',
-        help='no mouse pointer in screen captures')
-
-    op.add_option('-t', '--timeout', action='store', type='int', metavar='TIMEOUT',
-        help='abort if unable to complete all actions within TIMEOUT seconds')
-
-    op.add_option('-w', '--warp', action='store', type='float',
-        metavar='FACTOR', default=1.0,
-        help='pause time is accelerated by FACTOR [x%default]')
-
-    options, args = op.parse_args()
-
-    if not len(args):
-        op.error('no command provided')
-
-    setup_logging(options)
-    options.host, options.port = parse_host(options.server)
-
-    log.info('connecting to %s:%s', options.host, options.port)
-
-    factory = build_tool(options, args)
-    factory.password = options.password
-
-    if options.localcursor:
-        factory.pseudocursor = True
-
-    if options.nocursor:
-        factory.nocursor = True
-
-    if options.force_caps:
-        factory.force_caps = True
-
-    if options.timeout:
-        message = 'TIMEOUT Exceeded (%ss)' % options.timeout
-        failure = Failure(TimeoutError(message))
-        reactor.callLater(options.timeout, error, failure)
+    factory = build_tool()
+    factory.password = "123456"
 
     reactor.run()
 
