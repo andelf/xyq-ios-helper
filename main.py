@@ -235,33 +235,33 @@ def find_who_is_need_feed(positions):
 
 
 def loop_ZhuaGui(game):
-    start_time = time.time()
     # match_sub_image_in_main_image("./dropdown_button.png", "./2.png")
     #and not \
     #   match_sub_image_in_main_image("./guide_icon.png"):
     # 战斗取消图标。阵法图标
-    matcher = OpenCVImageMatcher("./2.png")
+    matcher = OpenCVImageMatcher(game.screen)
 
     STOP_AFTER = 0.1
 
+    if not matcher.match_sub_image("./login_game_button.png"):
+        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034][::-1]:
+            r, g, b = game.screen.getpixel((3,y))
+            # FIXME
+            if r > 150:
+                print u"场景过渡： skip"
+                #reactor.callLater(STOP_AFTER, reactor.stop)
+                return 0
+
     if matcher.match_sub_image("./chat_input.png"):
         print u"检测到聊天窗口开启 -- 停止挂机"
-        reactor.callLater(0.1, reactor.stop)
-        return
+        return STOP_AFTER
 
-    if matcher.match_sub_image_in_rect("./in_battle_dropdown_button.png", RECTS.BattleTopRightCorner) or \
-       matcher.match_sub_image_in_rect("./battle_cancel_icon.png", RECTS.BottomIcons) or \
-       matcher.match_sub_image_in_rect("./tactical_formation_icon.png", RECTS.BattleHeading) or \
-       matcher.match_sub_image_in_rect("./auto_icon.png", RECTS.BottomIcons):
+    if matcher.is_battle():
         print u"判定：战斗中"
         if matcher.match_sub_image_in_rect("./fashu_icon.png", RECTS.RightIcons):
             print u"已设置自动战斗！"
             game.touchAt(122, 1968)
             game.pause(0.5)
-        else:
-            # 尝试点一下边界，清理未关闭对话框
-            #game.touchAt(1483, 601)
-            pass
 
         pos = matcher.match_sub_image_in_rect("./close_icon.png", (818, 1112, 657, 835))
         if pos:
@@ -286,9 +286,7 @@ def loop_ZhuaGui(game):
         #     print u"检测到贫血队员", need_feed
 
     # 判定 “指引”， 加号
-    elif matcher.match_sub_image_in_rect("./guide_icon.png", RECTS.TopIcons) or \
-         matcher.match_sub_image_in_rect("./mall_icon.png", RECTS.LeftIcons) or \
-         matcher.match_sub_image_in_rect("./plus_icon.png", RECTS.BottomIcons):
+    elif matcher.is_normal():
         print u"判定：场景模式"
         # 任务框
         while True:
@@ -311,16 +309,33 @@ def loop_ZhuaGui(game):
                 game.touchAt(*pos)
                 break
 
-            print u"复杂操作开始。尝试领取"
-            game.touchAt(1454, 700)
+            if game.nothing_to_do_counter >= 4:
+                print u"连续%d尝试失败，尝试打开活动窗口领任务！" % game.nothing_to_do_counter
+                game.screen.save("./2.png")
+                game.touchAt(1454, 700)
+            else:
+                game.nothing_to_do_counter += 1
+                print u"警告！未发现可用任务，重试！"
+                return 1.0      # 直接返回
+
+            # while
+            # 归 0
+            game.nothing_to_do_counter = 0
             break
     else:
         print u"判定：特殊模式"
         while True:
             if matcher.match_sub_image_in_rect("./zhuagui_finished_label.png", RECTS.CenterPopUp):
-                print u"检测到继续捉鬼弹窗"
+                print u"对话框：检测到询问是否继续捉鬼"
                 game.touchAt(640, 1220)
                 break
+
+            if matcher.match_sub_image("./login_game_button.png"):
+                print u"弹窗：游戏登录窗口"
+                game.touchAt(224, 1036)
+                STOP_AFTER = 5.0
+                break
+
             if matcher.match_sub_image_in_rect("./activity_label.png", RECTS.WindowTitle):
                 print u"弹窗：活动列表"
                 print u"尝试领取捉鬼任务"
@@ -344,18 +359,16 @@ def loop_ZhuaGui(game):
                     print u"未找到捉鬼任务，尝试滑动下一页..."
                     game.mouseMove(810, 1685)
                     game.mouseDown(1)
-                    game.mouseDrag(810, 900, step = 40)
+                    game.mouseDrag(810, 900, step = 20)
                     game.mouseUp(1)
                     break
             break
 
         else:
-            print u"未知特殊模式，尝试识别按钮"
+            print u"未知特殊模式，尝试直接点击继续捉鬼按钮位置"
             game.touchAt(640, 1220)
-    print "#", time.ctime(), "tt=%.3fs" % (time.time() - start_time)
 
-    reactor.callLater(STOP_AFTER, reactor.stop)
-
+    return STOP_AFTER
 
 # game is the Game Client
 def loop(game):
@@ -795,14 +808,16 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
         self.counter += 1
         start_time = time.time()
 
-        sleep_after = loop(self)
+        #sleep_after = loop(self)
         #sleep_after = loop_JuQing(self)
+
+        sleep_after = loop_ZhuaGui(self)
 
         print '#', time.ctime(), "tt=%.3fs" % (time.time() - start_time), \
             "wait=%.1fs" % sleep_after, "cnt=%d" % self.counter
         #time.sleep(sleep_after)
 
-        reactor.callLater(sleep_after,
+        reactor.callLater(sleep_after + 4,
                           self.framebufferUpdateRequest,
                           incremental=1)
         self.resetTimeout()
@@ -938,7 +953,7 @@ def build_tool():
     #factory.deferred.addCallback(loop_JuQing)
     factory.deferred.addErrback(error)
 
-    reactor.connectTCP("192.168.1.102", 5900, factory)
+    reactor.connectTCP("192.168.1.104", 5900, factory)
     reactor.exit_status = 1
 
     return factory
