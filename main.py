@@ -1,11 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-#!/usr/bin/env python
-"""
-Command line interface to interact with a VNC Server
-(c) 2010 Marc Sibson
-MIT License
-"""
+# #  FileName    : main.py
+# #  Author      : ShuYu Wang <andelf@gmail.com>
+# #  Created     : Mon May  4 13:59:31 2015 by ShuYu Wang
+# #  Copyright   : Feather Workshop (c) 2015
+# #  Description : MY - Helper
+# #  Time-stamp: <2015-05-05 07:56:30 andelf>
+
 import random
 import time
 import getpass
@@ -16,9 +17,11 @@ import shlex
 import logging
 import logging.handlers
 import math
+import collections
+import socket
 
 from twisted.python.log import PythonLoggingObserver
-from twisted.internet import reactor, protocol
+from twisted.internet import reactor, protocol, defer
 from twisted.python import log
 from twisted.python.failure import Failure
 from twisted.protocols.policies import TimeoutMixin
@@ -26,9 +29,14 @@ from twisted.protocols.policies import TimeoutMixin
 from vncdotool.client import VNCDoToolFactory, VNCDoToolClient
 from vncdotool.loggingproxy import VNCLoggingServerFactory
 
+from vncdotool import rfb
+
 from PIL import Image
 import cv2
 import numpy as np
+
+socket.setdefaulttimeout(10.0)
+
 
 
 log = logging.getLogger()
@@ -244,7 +252,7 @@ def loop_ZhuaGui(game):
     STOP_AFTER = 0.1
 
     if not matcher.match_sub_image("./login_game_button.png"):
-        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034][::-1]:
+        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034]:
             r, g, b = game.screen.getpixel((3,y))
             # FIXME
             if r > 150:
@@ -309,18 +317,19 @@ def loop_ZhuaGui(game):
                 game.touchAt(*pos)
                 break
 
-            if game.nothing_to_do_counter >= 4:
+            if game.status.get("nothing_to_do_counter", 0) >= 2 :
                 print u"连续%d尝试失败，尝试打开活动窗口领任务！" % game.nothing_to_do_counter
                 game.screen.save("./2.png")
                 game.touchAt(1454, 700)
+                return 1.0
             else:
-                game.nothing_to_do_counter += 1
+                game.status["nothing_to_do_counter"] = game.status.get("nothing_to_do_counter", 0) + 1
                 print u"警告！未发现可用任务，重试！"
                 return 1.0      # 直接返回
 
             # while
             # 归 0
-            game.nothing_to_do_counter = 0
+            game.status["nothing_to_do_counter"] = 0
             break
     else:
         print u"判定：特殊模式"
@@ -383,10 +392,11 @@ def loop(game):
     ######################################## 过渡
     # 最左边经验条，为橘红色时，场景过渡进度条
     if not matcher.match_sub_image("./login_game_button.png"):
-        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034][::-1]:
+        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034]:
             r, g, b = game.screen.getpixel((3,y))
             # FIXME
             if r > 150:
+                print r, g, b
                 print u"场景过渡： skip"
                 #reactor.callLater(STOP_AFTER, reactor.stop)
                 return 0
@@ -499,18 +509,20 @@ def loop(game):
                 game.touchAt(1290, 1732)
 
             else:
-                if game.nothing_to_do_counter >= 4:
+                if game.status.get("nothing_to_do_counter", 0) >= 2:
                     print u"尝试打开活动窗口领任务！"
                     game.screen.save("./2.png")
                     game.touchAt(1454, 700)
+                    return 1.0
                 else:
-                    game.nothing_to_do_counter += 1
+                    game.status["nothing_to_do_counter"] = game.status.get("nothing_to_do_counter", 0) + 1
                     print u"警告！未发现可用任务，重试！"
                     return 1.0
 
             # while
             break
-        game.nothing_to_do_counter = 0
+        # 重置 counter
+        game.status["nothing_to_do_counter"] = 0
     else:
         print u"判定：特殊场景"
 
@@ -604,6 +616,7 @@ def loop(game):
                 if matcher.match_sub_image_in_rect("./activity_finished_button.png", RECTS.ActivityPanelButtons):
                     game.touchAt(1321, 1872)
                     print u"翻页已达最后，无可用任务，请手动处理！！"
+                    game.status['finished'] = True
                 else:
                     print u"未找到可用任务，尝试滑动下一页..."
                     game.touchAt(1192, 361) # 点击日常活动按钮
@@ -613,7 +626,7 @@ def loop(game):
                     game.mouseDown(1)
                     game.mouseDrag(810, 1200, step = 40)
                     game.mouseUp(1)
-                    STOP_AFTER = 5.0
+                    STOP_AFTER = 3.0
 
                 # pos = matcher.match_sub_image_in_rect("./activity_baotu_label.png",
                 #                                       RECTS.ActivityPanelHeader)
@@ -649,19 +662,134 @@ def loop(game):
             game.touchAt(1427, 1983)
             time.sleep(0.1)
         else:
-            pos = matcher.match_sub_image("./close_icon.png")
-            if pos:
-                print u"检测到有窗口遮挡"
-                game.touchAt(pos[0] + 20, pos[1] + 20)
-            else:
-                print u"尝试等待"
+            while True:
+                pos = matcher.match_sub_image("./close_icon.png")
+                if pos:
+                    print u"检测到有窗口遮挡"
+                    game.touchAt(pos[0] + 20, pos[1] + 20)
+                    return 0.5
+                else:
+                    print u"尝试等待"
+                    return 1.0
 
-
-        #break
-    #reactor.callLater(STOP_AFTER, reactor.stop)
 
     return STOP_AFTER
 
+
+# 帐号切换
+def loop_SwitchAccount(game):
+    width, height = game.width, game.height
+    matcher = OpenCVImageMatcher(game.screen)
+
+    STOP_AFTER = 0.5
+
+
+    # 第二步， 点击更换帐号
+    if game.status.get("switch_account_stage", 0) == 2:
+        game.touchAt(688, 906)
+        game.status["switch_account_stage"] = 3
+        return 0.1
+    # 第三步，登录窗口，点击网易通行证按钮
+    elif game.status.get("switch_account_stage", 0) == 3:
+        game.touchAt(542, 787)
+        game.status["switch_account_stage"] = 4
+        return 0.1
+
+    # 第四步，帐号密码窗口
+    elif game.status.get("switch_account_stage", 0) == 4:
+        game.touchAt(897, 895)
+        d = defer.Deferred()
+        # FIXME: 循环中使用 Python 闭包错误
+        for c in random.choice(["fledna", "dnafle", "lfande", "ndelfa", "nafled"]):
+            d.addCallback(lambda _, *arg: game.keyPress(*arg), c)
+            d.addCallback(lambda _, *arg: game.pause(*arg), 0.1)
+        d.addCallback(lambda *_: game.keyEvent(rfb.KEY_ShiftLeft, down=1))
+        d.addCallback(lambda _, *arg: game.keyPress(*arg), "2")
+        d.addCallback(lambda _, *arg: game.pause(*arg), 0.1)
+        d.addCallback(lambda *_: game.keyEvent(rfb.KEY_ShiftLeft, down=0))
+
+        for c in "163.com":
+            d.addCallback(lambda _, *arg: game.keyPress(*arg), c)
+            d.addCallback(lambda _, *arg: game.pause(*arg), 0.1)
+
+
+        d.addCallback(lambda *_: game.keyEvent(rfb.KEY_Tab, down=1))
+        d.addCallback(lambda *_: game.keyEvent(rfb.KEY_Tab, down=0))
+
+        for c in "password":
+            d.addCallback(lambda _, *arg: game.keyPress(*arg), c)
+            d.addCallback(lambda _, *arg: game.pause(*arg), 0.1)
+
+        game.deferred = d
+        game.status["switch_account_stage"] = 5
+        return 0.1
+
+    # 等待输入完成
+    elif game.status.get("switch_account_stage", 0) == 5:
+        # game.touchAt(818, 962)
+        game.status["switch_account_stage"] = 6
+        print u"等待输入完成"
+        return 5.0
+
+    # 点击确认
+    elif game.status.get("switch_account_stage", 0) == 6:
+        game.touchAt(722, 1020)
+        print u"确认登录"
+        game.status["switch_account_stage"] = 7
+        return 10.0
+
+    elif game.status.get("switch_account_stage", 0) == 7:
+        if matcher.match_sub_image("./login_game_button.png"):
+            print u"弹窗：游戏登录窗口"
+            game.touchAt(224, 1036)
+            game.pause(1.0)
+            game.status["finished"] = True
+            return 5.0
+
+
+    ######################################## 过渡
+    # 最左边经验条，为橘红色时，场景过渡进度条
+    if not matcher.match_sub_image("./login_game_button.png"):
+        for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034]:
+            r, g, b = game.screen.getpixel((3,y))
+            # FIXME
+            if r > 150:
+                print u"场景过渡： skip"
+                return 0
+
+    # elif matcher.match_sub_image_in_rect("./kicked_out_label.png", RECTS.AnyPopUp):
+    #     print u"警告：帐号被踢出"
+    #     return
+    ######################################## 战斗
+    # 判定自动、取消按钮，阵法图标
+    if matcher.is_battle():
+        print u"判定：战斗中"
+        return 10
+
+    elif matcher.is_normal():
+        if matcher.match_sub_image_in_rect("./plus_icon.png", RECTS.BottomIcons):
+            game.touchAt(103, 1966)
+            return 0.5
+        pos = matcher.match_sub_image_in_rect("./system_icon.png", RECTS.BottomIcons)
+        if pos:
+            game.touchAt(pos[0] + 40, pos[1] + 40)
+            return 0.5
+
+        # 用 while 循环的 break 快速退出判断
+
+    else:
+        if matcher.match_sub_image_in_rect("./basic_config_label.png", (1169, 814, 143, 368)):
+            print u"窗口：基础设置"
+            game.touchAt(380, 725) # 用户中心
+            game.status["switch_account_stage"] = 2 # 帐号信息窗口
+            return 2.0
+
+        pos = matcher.match_sub_image("./close_icon.png")
+        if pos:
+            print u"检测到有窗口遮挡"
+            game.touchAt(pos[0] + 20, pos[1] + 20)
+        else:
+            print u"尝试等待"
 
 
 
@@ -670,7 +798,7 @@ def loop_JuQing(game):
     width, height = game.width, game.height
     STOP_AFTER = 0.1
 
-    for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034][::-1]:
+    for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034]:
         r, g, b = game.screen.getpixel((3,y))
         # FIXME
         if r > 150:
@@ -694,10 +822,11 @@ def loop_JuQing(game):
     elif matcher.is_normal():
         print u"判定：场景模式"
 
-        pos = matcher.match_sub_image("./guide_left_top_border.png")
-        if pos:
-            print u"存在特殊指引"
-            game.touchAt(pos[0] - 40, pos[1] + 40)
+        # 无法识别
+        # pos = matcher.match_sub_image("./guide_left_top_border.png")
+        # if pos:
+        #     print u"存在特殊指引"
+        #     game.touchAt(pos[0] - 40, pos[1] + 40)
 
         # 任务框
         pos = matcher.match_sub_image("./use_icon.png")
@@ -757,8 +886,12 @@ def loop_JuQing(game):
                 #game.touchAt(640, 1220)
                 game.touchAt(926, 795)
 
-
     return STOP_AFTER
+
+
+
+
+
 
 
 
@@ -777,7 +910,8 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
         self.setTimeout(20)
 
         self.counter = 0
-        self.nothing_to_do_counter = 0
+        self.status = dict()
+        self.switching = False
 
         # self.setPixelFormat(bpp=8, depth=8, bigendian=0, truecolor=1,
         #     redmax=7,   greenmax=7,   bluemax=3,
@@ -808,16 +942,31 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
         self.counter += 1
         start_time = time.time()
 
-        #sleep_after = loop(self)
+        if self.switching:
+            if self.status.get('finished', False):
+                self.switching = False
+                self.status = dict()
+                sleep_after = loop(self)
+            else:
+                print u"切换帐号逻辑！"
+                sleep_after = loop_SwitchAccount(self)
+        else:
+            if self.status.get('finished', False):
+                self.switching = True
+                print u"启动切换帐号逻辑"
+                self.status = dict()
+                sleep_after = loop_SwitchAccount(self)
+            else:
+                sleep_after = loop(self)
         #sleep_after = loop_JuQing(self)
 
-        sleep_after = loop_ZhuaGui(self)
+        #sleep_after = loop_ZhuaGui(self)
 
         print '#', time.ctime(), "tt=%.3fs" % (time.time() - start_time), \
-            "wait=%.1fs" % sleep_after, "cnt=%d" % self.counter
+            "wait=%.1fs" % sleep_after, "cnt=%d" % self.counter, self.status
         #time.sleep(sleep_after)
 
-        reactor.callLater(sleep_after + 4,
+        reactor.callLater(sleep_after+ 2,
                           self.framebufferUpdateRequest,
                           incremental=1)
         self.resetTimeout()
