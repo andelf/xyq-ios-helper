@@ -5,7 +5,7 @@
 # #  Created     : Mon May  4 13:59:31 2015 by ShuYu Wang
 # #  Copyright   : Feather Workshop (c) 2015
 # #  Description : MY - Helper
-# #  Time-stamp: <2015-05-07 23:03:25 andelf>
+# #  Time-stamp: <2015-05-18 00:23:10 andelf>
 
 import random
 import time
@@ -225,6 +225,8 @@ class BaseGameLogic(object):
 
         self.switch_to = None
         self.STOP_AFTER = 0.5
+
+        self.start_at = time.time()
 
     def loop(self, game):
         self.game = game
@@ -495,142 +497,166 @@ class ZhuoGuiGameLogic(BaseGameLogic):
             game.touchAt(640, 1220)
 
 
-# def loop_ZhuaGui(game):
-#     # match_sub_image_in_main_image("./dropdown_button.png", "./2.png")
-#     #and not \
-#     #   match_sub_image_in_main_image("./guide_icon.png"):
-#     # 战斗取消图标。阵法图标
-#     matcher = OpenCVImageMatcher(game.screen)
 
-#     STOP_AFTER = 0.1
+class RoutineWorkGameLogic(BaseGameLogic):
+    """日常任务逻辑"""
+    def __init__(self):
+        super(RoutineWorkGameLogic, self).__init__()
 
-#     if not matcher.match_sub_image("./login_game_button.png"):
-#         for y in [40, 80, 536, 939, 1254, 1733, 1908, 2034]:
-#             r, g, b = game.screen.getpixel((3,y))
-#             # FIXME
-#             if r > 150:
-#                 print u"场景过渡： skip"
-#                 #reactor.callLater(STOP_AFTER, reactor.stop)
-#                 return 0
+        self.nothing_to_do_counter = 0
+        self.ping_ding_an_bang = False
 
-#     if matcher.match_sub_image("./chat_input.png"):
-#         print u"检测到聊天窗口开启 -- 停止挂机"
-#         return STOP_AFTER
 
-#     if matcher.is_battle():
-#         print u"判定：战斗中"
-#         if matcher.match_sub_image_in_rect("./fashu_icon.png", RECTS.RightIcons):
-#             print u"已设置自动战斗！"
-#             game.touchAt(122, 1968)
-#             game.pause(0.5)
+    def handle_battle(self):
+        mathcer = self.matcher
+        game = self.game
+        if matcher.match_sub_image_in_rect("./fashu_icon.png", RECTS.RightIcons):
+            print u"已设置自动战斗！"
+            game.touchAt(122, 1968)
+        pos = matcher.match_sub_image("./close_icon.png")
+        if pos:
+            print u"检测到有窗口遮挡"
+            game.touchAt(pos[0] + 20, pos[1] + 20)
 
-#         pos = matcher.match_sub_image_in_rect("./close_icon.png", (818, 1112, 657, 835))
-#         if pos:
-#             print u"检测到有窗口遮挡"
-#             game.touchAt(pos[0] + 20, pos[1] + 20)
+    def handle_normal(self):
+        mathcer = self.matcher
+        game = self.game
+        while True:
+            if not self.ping_ding_an_bang:
+                # 右上角有小红点，所以要严格匹配
+                pos = matcher.match_sub_image_in_rect("./guaji_notify_icon.png", RECTS.TopIcons, threshold = 0.9)
+                if pos:
+                    print u"挂机图标：领取平定安邦任务"
+                    d = defer.Deferred()
+                    d.addCallback(lambda _, *arg: game.touchAt(*arg), *pos)
+                    d.addCallback(lambda _, *arg: game.pause(*arg), 2.0)
+                    # 平定安邦
+                    d.addCallback(lambda _, *arg: game.touchAt(*arg), 267, 274)
+                    game.deferred = d
+                    STOP_AFTER = 5.0
+                    game.status['ping_ding_an_bang'] = True
+                    break
 
-#         # FIXME: not ok
-#         if False and matcher.match_sub_image("./chat_input.png") and False:
-#             print u"检测到 DEBUG 模式开启"
-#             game.touchAt(1419, 292)
-#             game.pause(2.0)
-#             for c in "test":
-#                 game.keyPress(c)
-#                 game.pause(0.5)
-#             game.pause(5.0)
-#             game.touchAt(1420, 940)
-#             game.pause(0.5)
+            pos = matcher.match_sub_image_in_rect("./bangpai_task.png", RECTS.Actions)
+            if pos:
+                print u"处理帮派任务按钮", pos
+                game.touchAt(*pos)
+                break
 
-#         # positions = matcher.match_sub_image_multi("./half_blood.png")
-#         # need_feed = find_who_is_need_feed(positions)
-#         # if need_feed:
-#         #     print u"检测到贫血队员", need_feed
+            pos = matcher.match_sub_image_in_rect("./qiecuo_icon.png", RECTS.Actions)
+            if pos:
+                print u"处理帮派任务--切磋"
+                game.touchAt(*pos)
+                break
 
-#     # 判定 “指引”， 加号
-#     elif matcher.is_normal():
-#         print u"判定：场景模式"
-#         # 任务框
-#         while True:
-#             pos = matcher.match_sub_image_in_rect("./use_icon.png", RECTS.ItemUse)
-#             if pos:
-#                 print u"任务道具使用"
-#                 game.touchAt(*pos)
-#                 break
+            # 这里的领取宝图任务可能和领取别的任务的描述相似度过高，所以取 t=0.9
+            pos = matcher.match_sub_image_in_rect("./lingqu_baotu_button.png", RECTS.Actions, threshold=0.9) or \
+                  matcher.match_sub_image_in_rect("./lingqu_baotu_tingtingwufang_button.png", RECTS.Actions)
+            if pos:
+                print u"领取宝图任务"
+                print u"重置藏宝图状态"
+                game.status['cang_bao_tu'] = False
+                game.touchAt(*pos)
+                break
 
-#             pos = matcher.match_sub_image_in_rect("./zhuogui_label.png", RECTS.Tasks) or \
-#                   matcher.match_sub_image_in_rect("./qiannianligui_label.png", RECTS.Tasks)
-#             if pos:
-#                 print u"追踪当前捉鬼任务"
-#                 game.touchAt(pos[0] + 20, pos[1] + 40)
-#                 break
+            pos = matcher.match_sub_image_in_rect("./get_bangpai_task_button.png", RECTS.Actions)
+            if pos:
+                print u"领取帮派任务"
+                game.touchAt(*pos)
+                break
 
-#             pos = matcher.match_sub_image_in_rect("./zhuagui_button.png", RECTS.Actions)
-#             if pos:
-#                 print u"领取抓鬼任务"
-#                 game.touchAt(*pos)
-#                 break
+            pos = matcher.match_sub_image_in_rect("./yasong_putong_biaoyin_button.png", RECTS.Actions)
+            if pos:
+                print u"领取普通运镖任务"
+                game.touchAt(*pos)
+                break
 
-#             if game.status.get("nothing_to_do_counter", 0) >= 2 :
-#                 print u"连续%d尝试失败，尝试打开活动窗口领任务！" % game.nothing_to_do_counter
-#                 game.screen.save("./2.png")
-#                 game.touchAt(1454, 700)
-#                 return 1.0
-#             else:
-#                 game.status["nothing_to_do_counter"] = game.status.get("nothing_to_do_counter", 0) + 1
-#                 print u"警告！未发现可用任务，重试！"
-#                 return 1.0      # 直接返回
+            pos = matcher.match_sub_image_in_rect("./shimen_extra_task_button.png", RECTS.Actions)
+            if pos:
+                print u"特殊师门任务按钮"
+                game.touchAt(*pos)
+                break
 
-#             # while
-#             # 归 0
-#             game.status["nothing_to_do_counter"] = 0
-#             break
-#     else:
-#         print u"判定：特殊模式"
-#         while True:
-#             if matcher.match_sub_image_in_rect("./zhuagui_finished_label.png", RECTS.CenterPopUp):
-#                 print u"对话框：检测到询问是否继续捉鬼"
-#                 game.touchAt(640, 1220)
-#                 break
+            # 只有一个NPC上有多个任务时候才会出现
+            pos = matcher.match_sub_image_in_rect("./shimenrenwu_button.png", RECTS.Actions)
+            if pos:
+                print u"师门任务按钮"
+                game.touchAt(*pos)
+                break
 
-#             if matcher.match_sub_image("./login_game_button.png"):
-#                 print u"弹窗：游戏登录窗口"
-#                 game.touchAt(224, 1036)
-#                 STOP_AFTER = 5.0
-#                 break
+            pos = matcher.match_sub_image_in_rect("./use_icon.png", RECTS.ItemUse)
+            if pos:
+                print u"处理任务道具使用", pos
+                game.touchAt(*pos)
+                STOP_AFTER = 3.0
+                break
 
-#             if matcher.match_sub_image_in_rect("./activity_label.png", RECTS.WindowTitle):
-#                 print u"弹窗：活动列表"
-#                 print u"尝试领取捉鬼任务"
-#                 #game.touchAt(363, 1658)
-#                 #game.pause(0.5)
-#                 while True:
-#                     # 活跃度奖励
-#                     if matcher.match_sub_image("./activity_info_popup_label.png"):
-#                         print u"BUG: 任务详情页被打开，关闭活动窗口"
-#                         game.touchAt(1321, 1872)
-#                         game.touchAt(1321, 1872)
-#                         break
 
-#                     pos = matcher.match_sub_image_in_rect("./activity_zhuogui_label.png", RECTS.ActivityPanelHeader)
-#                     if pos:
-#                         game.touchAt(pos[0] - 420, pos[1] + 120)
-#                         print u"领取捉鬼任务！等待到达..."
-#                         STOP_AFTER = 5.0
-#                         break
+            # $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+            pt = None
 
-#                     print u"未找到捉鬼任务，尝试滑动下一页..."
-#                     game.mouseMove(810, 1685)
-#                     game.mouseDown(1)
-#                     game.mouseDrag(810, 900, step = 20)
-#                     game.mouseUp(1)
-#                     break
-#             break
+            def match_and_click(pic, description):
+                # use RECT match
+                pos = matcher.match_sub_image_in_rect(pic, RECTS.Tasks)
+                if pos:
+                    print u"任务：" + description
+                    #pt = pos[0], pos[1] + 150
+                    pt = pos[0], 2000 # 尽量点击边界，免得误伤
+                    game.pause(0.5)
+                    game.touchAt(*pt)
+                    game.pause(0.2)
+                    game.touchAt(*pt)
+                    game.pause(0.2)
+                    return True
+                return False
 
-#         else:
-#             print u"未知特殊模式，尝试直接点击继续捉鬼按钮位置"
-#             game.touchAt(640, 1220)
+            if match_and_click("./xuanwu_label.png", u"帮派玄武任务"):
+                pass
+            elif match_and_click("./qinglong_label.png", u"帮派青龙任务"):
+                pass
+            elif match_and_click("./zhuque_label.png", u"帮派朱雀任务"):
+                pass
+            elif match_and_click("./shimen_label.png", u"师门"):
+                pass
+            elif match_and_click("./baotu_label.png", u"藏宝图"):
+                pass
+            # FIXME: 红尘试炼需要多种按钮格式配合 无法处理
+            # elif match_and_click("./hongchenshilian_label.png", "红尘试炼"):
+            #     pass
+            #elif matcher.match_sub_image_in_rect("./team_icon.png", RECTS.RightTabs):
+            elif matcher.match_sub_image_in_rect("./team_tab_label.png", RECTS.RightTeam) or \
+                 matcher.match_sub_image_in_rect("./team_tab_blood_magic.png", RECTS.RightTeam):
+                print u"检测到活动标签为队伍，尝试切换为任务标签"
+                game.touchAt(1290, 1732)
 
-#     return STOP_AFTER
+            elif not game.status.get("cang_bao_tu", False):
+                print u"打开包裹寻找藏宝图"
+                game.touchAt(267, 1968)
+                game.touchAt(247, 1676)
+            else:
+                if game.status.get("nothing_to_do_counter", 0) >= 2:
+                    print u"尝试打开活动窗口领任务！"
+                    game.screen.save("./2.png")
+
+                    d = defer.Deferred()
+                    d.addCallback(lambda _, *args: game.touchAt(*args), 1454, 700)
+                    d.addCallback(lambda _, *args: game.pause(*args), 0.5)
+                    print u"切换到日常活动标签"
+                    d.addCallback(lambda _, *args: game.touchAt(*args), 1194, 351)
+                    game.deferred = d
+                    return 1.0
+                else:
+                    game.status["nothing_to_do_counter"] = game.status.get("nothing_to_do_counter", 0) + 1
+                    print u"警告！未发现可用任务，重试！"
+                    return 1.0
+
+            # while
+            break
+        # 重置 counter
+        game.status["nothing_to_do_counter"] = 0
+
+
+
 
 # game is the Game Client
 def loop(game):
@@ -757,7 +783,7 @@ def loop(game):
                 # use RECT match
                 pos = matcher.match_sub_image_in_rect(pic, RECTS.Tasks)
                 if pos:
-                    print "任务：" + description
+                    print u"任务：" + description
                     #pt = pos[0], pos[1] + 150
                     pt = pos[0], 2000 # 尽量点击边界，免得误伤
                     game.pause(0.5)
@@ -768,15 +794,15 @@ def loop(game):
                     return True
                 return False
 
-            if match_and_click("./xuanwu_label.png", "帮派玄武任务"):
+            if match_and_click("./xuanwu_label.png", u"帮派玄武任务"):
                 pass
-            elif match_and_click("./qinglong_label.png", "帮派青龙任务"):
+            elif match_and_click("./qinglong_label.png", u"帮派青龙任务"):
                 pass
-            elif match_and_click("./zhuque_label.png", "帮派朱雀任务"):
+            elif match_and_click("./zhuque_label.png", u"帮派朱雀任务"):
                 pass
-            elif match_and_click("./shimen_label.png", "师门"):
+            elif match_and_click("./shimen_label.png", u"师门"):
                 pass
-            elif match_and_click("./baotu_label.png", "藏宝图"):
+            elif match_and_click("./baotu_label.png", u"藏宝图"):
                 pass
             # FIXME: 红尘试炼需要多种按钮格式配合 无法处理
             # elif match_and_click("./hongchenshilian_label.png", "红尘试炼"):
@@ -1024,7 +1050,7 @@ def loop_SwitchAccount(game):
         game.deferred = d
 
         game.status["switch_account_stage"] = 4
-        return 2.0
+        return 5.0
 
     # 第四步，帐号密码窗口
     elif game.status.get("switch_account_stage", 0) == 4:
@@ -1037,8 +1063,7 @@ def loop_SwitchAccount(game):
         d.addCallback(lambda _, *arg: game.pause(*arg), 1.0)
 
         # FIXME: 循环中使用 Python 闭包错误
-        for c in random.choice(["fledna", "dnafle", "lfande", "ndelfa", "nafled",
-                                "qq85660100", "lednaf"]):
+        for c in random.choice(["username"]):
             d.addCallback(lambda _, *arg: game.keyPress(*arg), c)
             d.addCallback(lambda _, *arg: game.pause(*arg), 0.1)
         d.addCallback(lambda *_: game.keyEvent(rfb.KEY_ShiftLeft, down=1))
@@ -1054,7 +1079,7 @@ def loop_SwitchAccount(game):
         d.addCallback(lambda *_: game.keyEvent(rfb.KEY_Tab, down=1))
         d.addCallback(lambda *_: game.keyEvent(rfb.KEY_Tab, down=0))
 
-        for c in "password":
+        for c in "passwd":
             d.addCallback(lambda _, *arg: game.keyPress(*arg), c)
             d.addCallback(lambda _, *arg: game.pause(*arg), 0.1)
 
@@ -1152,23 +1177,49 @@ def loop_SwitchAccount(game):
 
 class JuQingGameLogic(BaseGameLogic):
     def handle_battle(self):
+        matcher = self.matcher
+        game = self.game
         if matcher.match_sub_image_in_rect("./fashu_icon.png", RECTS.RightIcons):
             print u"已设置自动战斗！"
             game.touchAt(122, 1968)
             game.pause(0.5)
 
     def handle_normal(self):
+        matcher = self.matcher
+        game = self.game
         pos = matcher.match_sub_image_in_rect("./use_icon.png", RECTS.ItemUse)
         if pos:
             print u"任务道具使用", pos
             game.touchAt(*pos)
             game.touchAt(*pos)
+
         else:
+            pos = matcher.match_sub_image_in_rect("./select_pet_label.png", (1009, 609, 264, 837))
+            if pos:
+                print u"选择宠物"
+                game.touchAt(752, 946)
+                return
+
+            pos = matcher.match_sub_image_in_rect("./zhuzhan_icon.png", RECTS.BottomIcons)
+            if pos:
+                print u"设置助战"
+                d = defer.Deferred()
+                d.addCallback(lambda _, *args: game.touchAt(*args), pos[0] + 40, pos[1] + 40)
+                d.addCallback(lambda _, *args: game.pause(*args), 10)
+
             pos = matcher.match_sub_image_in_rect("./select_what_to_do_label.png", RECTS.Actions)
             if pos:
                 print u"选择要做的事"
                 game.touchAt(pos[0] - 130, pos[1] + 200)
                 game.pause(0.5)
+                return
+
+            pos = matcher.match_sub_image_in_rect("./hongchenshilian_label.png", RECTS.Tasks)
+            if pos:
+                print u"红尘试炼"
+                game.touchAt(pos[0] + 20, pos[1] + 200)
+                return
+
             else:
                 pt = (1144, 1829)
                 pos = matcher.match_sub_image_in_rect("./levelup_needed_label.png", RECTS.Tasks)
@@ -1180,7 +1231,14 @@ class JuQingGameLogic(BaseGameLogic):
                 x, y = pt
                 game.touchAt(x, y + 100)
 
+            if matcher.match_sub_image_in_rect("./team_tab_label.png", RECTS.RightTeam) or \
+               matcher.match_sub_image_in_rect("./team_tab_blood_magic.png", RECTS.RightTeam):
+                print u"检测到活动标签为队伍，尝试切换为任务标签"
+                game.touchAt(1290, 1732)
+
     def handle_special(self):
+        matcher = self.matcher
+        game = self.game
         pos = matcher.match_sub_image_in_rect("./continue_icon.png", RECTS.RightCorner)
         if pos:
             print u"检测到剧情继续按钮"
@@ -1192,6 +1250,17 @@ class JuQingGameLogic(BaseGameLogic):
             game.touchAt(*pt)
             game.touchAt(*pt)
             game.touchAt(*pt)
+            return
+        pos = matcher.match_sub_image("./buy_button.png")
+        if pos:
+            print u"买买买"
+            game.touchAt(pos[0] + 20, pos[1] + 20)
+            return
+        pos = matcher.match_sub_image_in_rect("./hand_in_button.png", RECTS.TaskPopUp)
+        if pos:
+            print u"任务物品上交"
+            game.touchAt(*pos)
+            return
         else:
             pos = matcher.match_sub_image("./close_icon.png")
             if pos:
@@ -1322,6 +1391,8 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
         #     redshift=5, greenshift=2, blueshift=0
         # )
 
+        #self.status['finished'] = True
+
         # print dir(self)
         # self.switching = True
         # self.status = {'switch_account_stage': 3}
@@ -1341,21 +1412,23 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
 
         self.sendPassword(self.factory.password)
 
-    def __commitUpdate(self, rectangles):
+    def d2commitUpdate(self, rectangles):
         VNCDoToolClient.commitUpdate(self, rectangles)
 
         self.counter += 1
         start_time = time.time()
 
-        logic = SanJieQiYuanGameLogic()
-        sleep_after = logic.loop(self) or 1000.0
+        #logic = SanJieQiYuanGameLogic()
+        logic = JuQingGameLogic()
+        sleep_after = logic.loop(self) or 1.0
 
         print '#', time.ctime(), "tt=%.3fs" % (time.time() - start_time), \
             "wait=%.1fs" % sleep_after, "cnt=%d" % self.counter, self.status
 
         #reactor.callLater(0.1, reactor.stop)
-        reactor.callLater(sleep_after + 1,
+        reactor.callLater(sleep_after,
                           self.framebufferUpdateRequest,
+#                          *RECTS.Tasks,
                           incremental=1)
 
         self.resetTimeout()
@@ -1383,7 +1456,7 @@ class VNCXyqClient(VNCDoToolClient, TimeoutMixin):
         #sleep_after = loop_JuQing(self)
 
         #sleep_after = loop_ZhuaGui(self)
-
+        sleep_after = sleep_after or 0.1
         print '#', time.ctime(), "tt=%.3fs" % (time.time() - start_time), \
             "wait=%.1fs" % sleep_after, "cnt=%d" % self.counter, self.status
 
