@@ -5,7 +5,7 @@
 # #  Created     : Mon May  4 13:59:31 2015 by ShuYu Wang
 # #  Copyright   : Feather Workshop (c) 2015
 # #  Description : MY - Helper
-# #  Time-stamp: <2015-05-18 00:23:10 andelf>
+# #  Time-stamp: <2015-05-20 18:11:29 andelf>
 
 import random
 import time
@@ -772,7 +772,11 @@ def loop(game):
             if pos:
                 print u"处理任务道具使用", pos
                 game.touchAt(*pos)
-                STOP_AFTER = 3.0
+                if matcher.match_sub_image_in_rect("./cangbaotu_icon.png", RECTS.ItemUse):
+                    STOP_AFTER = 10.0
+                    print u"藏宝图使用"
+                else:
+                    STOP_AFTER = 3.0
                 break
 
 
@@ -906,7 +910,7 @@ def loop(game):
                 game.touchAt(*pos)
                 print u"使用"
                 game.touchAt(608, 788)
-                STOP_AFTER = 5.0
+                STOP_AFTER = 10.0
             else:
                 print u"未找到藏宝图，藏宝图标记完成"
                 game.status['cang_bao_tu'] = True
